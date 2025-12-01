@@ -19,6 +19,7 @@ public class DataCleaner {
         
         while ((line = br.readLine()) != null) {
             String[] values = line.split(",");
+            
             if (isHeader) {
                 headers = values;
                 isHeader = false;

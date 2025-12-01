@@ -31,6 +31,11 @@ public class DataAnalyzer {
         int missingCount = 0;
         
         for (String[] row : data) {
+
+            if (row == null || columnIndex >= row.length) {
+                missingCount++;
+                continue;
+            }
             try {
                 if (row[columnIndex] == null || row[columnIndex].trim().isEmpty()) {
                     missingCount++;
@@ -38,7 +43,6 @@ public class DataAnalyzer {
                     values.add(Double.parseDouble(row[columnIndex]));
                 }
             } catch (NumberFormatException e) {
-                // Not a numeric column
                 return;
             }
         }
