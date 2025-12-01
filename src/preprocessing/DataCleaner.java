@@ -18,13 +18,23 @@ public class DataCleaner {
         boolean isHeader = true;
         
         while ((line = br.readLine()) != null) {
-            String[] values = line.split(",");
+            String[] values = line.split(",", -1);  // -1 to keep trailing empty strings
             
             if (isHeader) {
                 headers = values;
                 isHeader = false;
             } else {
-                data.add(values);
+                // Ensure all rows have same number of columns as headers
+                if (values.length < headers.length) {
+                    String[] paddedRow = new String[headers.length];
+                    System.arraycopy(values, 0, paddedRow, 0, values.length);
+                    for (int i = values.length; i < headers.length; i++) {
+                        paddedRow[i] = "";  // Fill missing columns with empty string
+                    }
+                    data.add(paddedRow);
+                } else {
+                    data.add(values);
+                }
             }
         }
         br.close();
@@ -58,11 +68,20 @@ public class DataCleaner {
         List<Double> values = new ArrayList<>();
         
         for (String[] row : data) {
+            if (columnIndex >= row.length) continue;
             try {
-                values.add(Double.parseDouble(row[columnIndex]));
+                String val = row[columnIndex];
+                if (val != null && !val.trim().isEmpty()) {
+                    values.add(Double.parseDouble(val.trim()));
+                }
             } catch (NumberFormatException e) {
                 // Skip non-numeric values
             }
+        }
+        
+        if (values.isEmpty()) {
+            System.out.println("No numeric values found in column " + columnIndex);
+            return;
         }
         
         double mean = values.stream().mapToDouble(Double::doubleValue).average().orElse(0);
@@ -77,8 +96,17 @@ public class DataCleaner {
         int removed = 0;
         
         for (String[] row : data) {
+            if (columnIndex >= row.length) {
+                cleanedData.add(row);
+                continue;
+            }
             try {
-                double value = Double.parseDouble(row[columnIndex]);
+                String val = row[columnIndex];
+                if (val == null || val.trim().isEmpty()) {
+                    cleanedData.add(row);
+                    continue;
+                }
+                double value = Double.parseDouble(val.trim());
                 if (Math.abs(value - mean) <= threshold * stdDev) {
                     cleanedData.add(row);
                 } else {
@@ -97,21 +125,39 @@ public class DataCleaner {
         List<Double> values = new ArrayList<>();
         
         for (String[] row : data) {
+            if (columnIndex >= row.length) continue;
             try {
-                values.add(Double.parseDouble(row[columnIndex]));
+                String val = row[columnIndex];
+                if (val != null && !val.trim().isEmpty()) {
+                    values.add(Double.parseDouble(val.trim()));
+                }
             } catch (NumberFormatException e) {
-                // Skip
+                // Skip non-numeric values
             }
+        }
+        
+        if (values.isEmpty()) {
+            System.out.println("No numeric values found in column " + columnIndex);
+            return;
         }
         
         double min = values.stream().mapToDouble(Double::doubleValue).min().orElse(0);
         double max = values.stream().mapToDouble(Double::doubleValue).max().orElse(1);
         
+        if (max == min) {
+            System.out.println("Column " + columnIndex + " has constant value, skipping normalization");
+            return;
+        }
+        
         for (String[] row : data) {
+            if (columnIndex >= row.length) continue;
             try {
-                double value = Double.parseDouble(row[columnIndex]);
-                double normalized = (value - min) / (max - min);
-                row[columnIndex] = String.format("%.4f", normalized);
+                String val = row[columnIndex];
+                if (val != null && !val.trim().isEmpty()) {
+                    double value = Double.parseDouble(val.trim());
+                    double normalized = (value - min) / (max - min);
+                    row[columnIndex] = String.format("%.4f", normalized);
+                }
             } catch (NumberFormatException e) {
                 // Keep original
             }
@@ -119,9 +165,85 @@ public class DataCleaner {
         
         System.out.println("Normalized column " + columnIndex);
     }
+
+    public void imputeNumericMean(int columnIndex) {
+        // Calculate mean from non-missing values
+        List<Double> values = new ArrayList<>();
+        for (String[] row : data) {
+            if (columnIndex >= row.length) continue;
+            String val = row[columnIndex];
+            if (val != null && !val.trim().isEmpty()) {
+                try {
+                    values.add(Double.parseDouble(val.trim()));
+                } catch (NumberFormatException e) {
+                    // Skip non-numeric values
+                }
+            }
+        }
+        
+        if (values.isEmpty()) {
+            System.out.println("No numeric values found in column " + columnIndex);
+            return;
+        }
+        
+        double mean = values.stream().mapToDouble(Double::doubleValue).average().orElse(0);
+        int imputed = 0;
+        
+        // Replace missing values with mean
+        for (String[] row : data) {
+            if (columnIndex >= row.length) continue;
+            if (row[columnIndex] == null || row[columnIndex].trim().isEmpty()) {
+                row[columnIndex] = String.format("%.4f", mean);
+                imputed++;
+            }
+        }
+        
+        System.out.println("Imputed " + imputed + " missing values in column " + columnIndex + 
+                           " (" + headers[columnIndex] + ") with mean: " + String.format("%.4f", mean));
+    }
     
+    public Map<String, Integer> labelEncoding(int columnIndex) {
+        Map<String, Integer> labelMap = new LinkedHashMap<>();
+        int labelCounter = 0;
+        
+        // Build label map
+        for (String[] row : data) {
+            if (columnIndex >= row.length) continue;
+            String value = row[columnIndex];
+            if (value != null) {
+                value = value.trim();
+                if (!value.isEmpty() && !labelMap.containsKey(value)) {
+                    labelMap.put(value, labelCounter++);
+                }
+            }
+        }
+        
+        // Apply encoding
+        for (String[] row : data) {
+            if (columnIndex >= row.length) continue;
+            String value = row[columnIndex];
+            if (value != null) {
+                value = value.trim();
+                if (labelMap.containsKey(value)) {
+                    row[columnIndex] = String.valueOf(labelMap.get(value));
+                }
+            }
+        }
+        
+        System.out.println("Label encoded column " + columnIndex + " (" + headers[columnIndex] + 
+                           ") with " + labelMap.size() + " unique labels");
+        
+        return labelMap;
+    }
+
     public void saveCleanedData(String outputPath) throws IOException {
-        BufferedWriter bw = new BufferedWriter(new FileWriter(outputPath));
+        File file = new File(outputPath);
+        // Create parent directories if they don't exist
+        if (file.getParentFile() != null) {
+            file.getParentFile().mkdirs();
+        }
+        
+        BufferedWriter bw = new BufferedWriter(new FileWriter(file));
         
         // Write headers
         bw.write(String.join(",", headers));
