@@ -1,7 +1,7 @@
 import preprocessing.DataCleaner;
 import preprocessing.DataAnalyzer;
 import java.io.IOException;
-
+import Model.RandomForestClassifier;
 
 import utils.SplitData;
 
@@ -28,10 +28,9 @@ public class Main {
             cleaner.removeOutliers(2, 2.5);
 
             int lifeLadderIndex = 2;
-            
-            
-            double[] thresholds = {5.5, 7.0};
-            String[] classLabels = {"Low", "Medium", "High"};
+
+            double[] thresholds = { 5.5, 7.0 };
+            String[] classLabels = { "Low", "Medium", "High" };
             cleaner.discretizeColumn(lifeLadderIndex, thresholds, classLabels);
 
             // Normalize numeric columns
@@ -58,8 +57,9 @@ public class Main {
             // Save cleaned data
             cleaner.saveCleanedData(outputPath);
 
+            RandomForestClassifier.runRandomForest(trainCsvPath);
 
-        } catch (IOException e) {
+        } catch (Exception e) {
             System.err.println("Error during data processing: " + e.getMessage());
             e.printStackTrace();
         }
