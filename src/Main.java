@@ -1,6 +1,8 @@
 import preprocessing.DataCleaner;
 import preprocessing.DataAnalyzer;
 import java.io.IOException;
+
+
 import utils.SplitData;
 
 public class Main {
@@ -8,6 +10,7 @@ public class Main {
         try {
             String inputPath = "src/data/World Happiness Report 2024.csv";
             String outputPath = "src/data/cleaned_world_happiness.csv";
+            String trainCsvPath = "src/data/train.csv";
 
             DataCleaner cleaner = new DataCleaner(inputPath);
 
@@ -24,8 +27,15 @@ public class Main {
             // Remove outliers from Life Ladder column (index 2)
             cleaner.removeOutliers(2, 2.5);
 
+            int lifeLadderIndex = 2;
+            
+            
+            double[] thresholds = {5.5, 7.0};
+            String[] classLabels = {"Low", "Medium", "High"};
+            cleaner.discretizeColumn(lifeLadderIndex, thresholds, classLabels);
+
             // Normalize numeric columns
-            cleaner.normalizeColumn(2); // Life Ladder
+            // cleaner.normalizeColumn(2); // Life Ladder
             cleaner.normalizeColumn(3); // Log GDP per capita
             cleaner.normalizeColumn(4); // Social support
             cleaner.normalizeColumn(5); // Healthy life expectancy at birth
@@ -47,6 +57,7 @@ public class Main {
 
             // Save cleaned data
             cleaner.saveCleanedData(outputPath);
+
 
         } catch (IOException e) {
             System.err.println("Error during data processing: " + e.getMessage());

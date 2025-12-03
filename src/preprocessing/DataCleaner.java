@@ -236,6 +236,47 @@ public class DataCleaner {
         return labelMap;
     }
 
+    public void discretizeColumn(int columnIndex, double[] cutoffs, String[] labels) {
+        if (cutoffs.length != labels.length - 1) {
+            System.err.println("Lỗi: Số lượng cutoffs phải bằng số lượng labels trừ 1.");
+            return;
+        }
+
+        int changed = 0;
+
+        for (String[] row : data) {
+            if (columnIndex >= row.length)
+                continue;
+
+            try {
+                String val = row[columnIndex];
+                if (val == null || val.trim().isEmpty()) {
+                    continue;
+                }
+
+                double value = Double.parseDouble(val.trim());
+                String newLabel = labels[labels.length - 1]; 
+
+                for (int i = 0; i < cutoffs.length; i++) {
+                    if (value <= cutoffs[i]) {
+                        newLabel = labels[i];
+                        break;
+                    }
+                }
+
+          
+                row[columnIndex] = newLabel;
+                changed++;
+
+            } catch (NumberFormatException e) {
+            }
+        }
+
+        System.out.println("Discretized " + changed + " values in column " + columnIndex +
+                " (" + headers[columnIndex] + ") into " + labels.length + " classes.");
+
+    }
+
     public void saveCleanedData(String outputPath) throws IOException {
         File file = new File(outputPath);
         // Create parent directories if they don't exist
