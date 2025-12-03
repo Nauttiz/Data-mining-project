@@ -6,17 +6,15 @@ import java.util.*;
 
 public class RandomForestClassifier {
 
-    // ================== CẤU TRÚC CÂY ==================
     private static class TreeNode {
         boolean isLeaf;
-        String label; // nhãn tại nút (majority, dùng cho lá/fallback)
-        int featureIndex; // cột dùng để split
-        double threshold; // ngưỡng split
+        String label; 
+        int featureIndex; 
+        double threshold; 
         TreeNode left;
         TreeNode right;
     }
 
-    // ================== THUỘC TÍNH RANDOM FOREST ==================
     private List<TreeNode> trees;
     private int numTrees;
     private int maxDepth;
@@ -95,9 +93,7 @@ public class RandomForestClassifier {
         return (double) correct / (double) Xtest.size();
     }
 
-    // ================== HÀM CHẠY TỪ MAIN ==================
 
-    // Gọi: RandomForestClassifier.runRandomForest("src/data/train.csv");
     public static void runRandomForest(String trainCsvPath) {
         try {
             List<double[]> X = new ArrayList<>();
@@ -173,7 +169,6 @@ public class RandomForestClassifier {
         }
     }
 
-    // ================== ĐỌC CSV & TẠO FEATURES/LABEL ==================
     private static void loadData(String path,
             List<double[]> X,
             List<String> y) throws IOException {
@@ -193,7 +188,7 @@ public class RandomForestClassifier {
                 continue;
 
             // Lấy nhãn TRỰC TIẾP từ cột 2 (Life Ladder)
-            // Nhãn đã là "Low", "Medium", "High" từ bước tiền xử lý
+            // Nhãn đã là "Low", "Medium", "High" 
             String label = parts[2].trim();
             y.add(label);
 
@@ -219,7 +214,6 @@ public class RandomForestClassifier {
         }
     }
 
-    // ================== HÀM XÂY CÂY & HÀM PHỤ ==================
 
     private TreeNode buildTree(List<double[]> X, List<String> y,
             int depth, int mFeatures) {

@@ -1,6 +1,5 @@
 import preprocessing.DataCleaner;
 import preprocessing.DataAnalyzer;
-import java.io.IOException;
 import Model.RandomForestClassifier;
 
 import utils.SplitData;
