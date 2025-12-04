@@ -1,6 +1,7 @@
 import preprocessing.DataCleaner;
 import preprocessing.DataAnalyzer;
 import Model.RandomForestClassifier;
+import Model.PCA_RandomForest;
 
 import utils.SplitData;
 
@@ -9,8 +10,8 @@ public class Main {
         try {
             String inputPath = "src/data/World Happiness Report 2024.csv";
             String outputPath = "src/data/cleaned_world_happiness.csv";
-            String trainCsvPath = "src/data/train.csv";
-            String testCsvPath = "src/data/test.csv";
+            String trainPath = "src/data/train.csv";
+            String testPath = "src/data/test.csv";
 
             DataCleaner cleaner = new DataCleaner(inputPath);
 
@@ -57,7 +58,9 @@ public class Main {
             // Save cleaned data
             cleaner.saveCleanedData(outputPath);
 
-            RandomForestClassifier.runRandomForestTrainTest(trainCsvPath, testCsvPath);
+            RandomForestClassifier.runRandomForestTrainTest(trainPath, testPath);
+
+            PCA_RandomForest.runPCAPipeline(trainPath, testPath, 5);
 
         } catch (Exception e) {
             System.err.println("Error during data processing: " + e.getMessage());
