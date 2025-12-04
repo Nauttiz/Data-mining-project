@@ -10,6 +10,7 @@ public class Main {
             String inputPath = "src/data/World Happiness Report 2024.csv";
             String outputPath = "src/data/cleaned_world_happiness.csv";
             String trainCsvPath = "src/data/train.csv";
+            String testCsvPath = "src/data/test.csv";
 
             DataCleaner cleaner = new DataCleaner(inputPath);
 
@@ -56,7 +57,7 @@ public class Main {
             // Save cleaned data
             cleaner.saveCleanedData(outputPath);
 
-            RandomForestClassifier.runRandomForest(trainCsvPath);
+            RandomForestClassifier.runRandomForestTrainTest(trainCsvPath, testCsvPath);
 
         } catch (Exception e) {
             System.err.println("Error during data processing: " + e.getMessage());

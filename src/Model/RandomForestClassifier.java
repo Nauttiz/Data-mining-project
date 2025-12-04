@@ -4,8 +4,31 @@ import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
 
+import java.util.function.*;
+import java.util.stream.*;
+
 public class RandomForestClassifier {
 
+    // ===========================================================
+    // HELPER METHODS FOR STRING REPETITION (Java 8 compatible)
+    // ===========================================================
+    private static String repeatChar(char ch, int count) {
+        char[] chars = new char[count];
+        Arrays.fill(chars, ch);
+        return new String(chars);
+    }
+    
+    private static String repeatString(String str, int count) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            sb.append(str);
+        }
+        return sb.toString();
+    }
+
+    // ===========================================================
+    // TREE NODE CLASS
+    // ===========================================================
     private static class TreeNode {
         boolean isLeaf;
         String label;
@@ -15,15 +38,21 @@ public class RandomForestClassifier {
         TreeNode right;
     }
 
-    private List<TreeNode> trees;
-    private int numTrees;
-    private int maxDepth;
-    private int minSamplesSplit;
-    private int maxFeatures;
-    private Random random;
+    // ===========================================================
+    // FIELDS
+    // ===========================================================
+    private final List<TreeNode> trees;
+    private final int numTrees;
+    private final int maxDepth;
+    private final int minSamplesSplit;
+    private final int maxFeatures;
+    private final Random random;
 
+    // ===========================================================
+    // CONSTRUCTOR
+    // ===========================================================
     public RandomForestClassifier(int numTrees, int maxDepth,
-            int minSamplesSplit, int maxFeatures) {
+                                  int minSamplesSplit, int maxFeatures) {
         this.numTrees = numTrees;
         this.maxDepth = maxDepth;
         this.minSamplesSplit = minSamplesSplit;
@@ -32,500 +61,631 @@ public class RandomForestClassifier {
         this.random = new Random(42);
     }
 
-    // ================== API TRAIN/PREDICT/ACCURACY ==================
-
+    // ===========================================================
+    // TRAINING METHODS
+    // ===========================================================
     public void fit(List<double[]> X, List<String> y) {
+        validateInput(X, y);
         trees.clear();
+        
         int nSamples = X.size();
-        if (nSamples == 0)
-            return;
-
         int nFeatures = X.get(0).length;
-        int mFeatures = maxFeatures > 0 ? Math.min(maxFeatures, nFeatures) : nFeatures;
-
+        int mFeatures = calculateFeaturesPerTree(nFeatures);
+        
+        System.out.println("Training Random Forest with " + numTrees + " trees...");
+        
         for (int t = 0; t < numTrees; t++) {
-            // Bootstrap sample
+            // Bootstrap sampling with replacement
             List<double[]> sampleX = new ArrayList<>();
             List<String> sampleY = new ArrayList<>();
+            
             for (int i = 0; i < nSamples; i++) {
                 int idx = random.nextInt(nSamples);
                 sampleX.add(X.get(idx));
                 sampleY.add(y.get(idx));
             }
+            
             TreeNode root = buildTree(sampleX, sampleY, 0, mFeatures);
             trees.add(root);
+            
+            // Progress tracking
+            if ((t + 1) % 10 == 0 || t == numTrees - 1) {
+                System.out.println("  Trained " + (t + 1) + "/" + numTrees + " trees");
+            }
         }
     }
+    
+    private void validateInput(List<double[]> X, List<String> y) {
+        Objects.requireNonNull(X, "Feature matrix cannot be null");
+        Objects.requireNonNull(y, "Labels cannot be null");
+        
+        if (X.isEmpty() || X.size() != y.size()) {
+            throw new IllegalArgumentException("Invalid input data dimensions");
+        }
+    }
+    
+    private int calculateFeaturesPerTree(int nFeatures) {
+        return maxFeatures > 0 ? 
+               Math.min(maxFeatures, nFeatures) : 
+               (int) Math.sqrt(nFeatures);
+    }
 
+    // ===========================================================
+    // PREDICTION METHODS
+    // ===========================================================
     public String predict(double[] x) {
-        if (trees.isEmpty())
-            return null;
-
-        Map<String, Integer> votes = new HashMap<>();
-        for (TreeNode tree : trees) {
-            String label = predictTree(tree, x);
-            if (label == null)
-                continue;
-            votes.put(label, votes.getOrDefault(label, 0) + 1);
+        if (trees.isEmpty()) {
+            throw new IllegalStateException("Model has not been trained");
         }
-
-        String bestLabel = null;
-        int bestCount = -1;
-        for (Map.Entry<String, Integer> e : votes.entrySet()) {
-            if (e.getValue() > bestCount) {
-                bestCount = e.getValue();
-                bestLabel = e.getKey();
-            }
+        
+        // Collect votes from all trees
+        Map<String, Long> votes = trees.stream()
+            .map(tree -> predictTree(tree, x))
+            .collect(Collectors.groupingBy(
+                Function.identity(),
+                Collectors.counting()
+            ));
+        
+        // Return label with most votes
+        return votes.entrySet().stream()
+            .max(Map.Entry.comparingByValue())
+            .map(Map.Entry::getKey)
+            .orElse("Unknown");
+    }
+    
+    public List<String> predict(List<double[]> X) {
+        return X.stream()
+               .map(this::predict)
+               .collect(Collectors.toList());
+    }
+    
+    private String predictTree(TreeNode node, double[] x) {
+        while (!node.isLeaf) {
+            node = (x[node.featureIndex] <= node.threshold) ? node.left : node.right;
         }
-        return bestLabel;
+        return node.label;
     }
 
-    public double accuracy(List<double[]> Xtest, List<String> ytest) {
-        if (Xtest.isEmpty())
+    // ===========================================================
+    // TREE BUILDING METHODS
+    // ===========================================================
+    private TreeNode buildTree(List<double[]> X, List<String> y, int depth, int mFeatures) {
+        TreeNode node = new TreeNode();
+        
+        // Check stopping conditions
+        if (shouldStopBuilding(X, y, depth)) {
+            node.isLeaf = true;
+            node.label = getMajorityLabel(y);
+            return node;
+        }
+        
+        // Find best split
+        SplitInfo bestSplit = findBestSplit(X, y, mFeatures);
+        
+        if (!bestSplit.isValid()) {
+            node.isLeaf = true;
+            node.label = getMajorityLabel(y);
+            return node;
+        }
+        
+        // Create split node
+        node.isLeaf = false;
+        node.featureIndex = bestSplit.featureIndex;
+        node.threshold = bestSplit.threshold;
+        node.label = getMajorityLabel(y);
+        
+        // Build subtrees
+        List<double[]> leftX = bestSplit.leftIndices.stream()
+                              .map(X::get)
+                              .collect(Collectors.toList());
+        List<String> leftY = bestSplit.leftIndices.stream()
+                            .map(y::get)
+                            .collect(Collectors.toList());
+        
+        List<double[]> rightX = bestSplit.rightIndices.stream()
+                               .map(X::get)
+                               .collect(Collectors.toList());
+        List<String> rightY = bestSplit.rightIndices.stream()
+                             .map(y::get)
+                             .collect(Collectors.toList());
+        
+        node.left = buildTree(leftX, leftY, depth + 1, mFeatures);
+        node.right = buildTree(rightX, rightY, depth + 1, mFeatures);
+        
+        return node;
+    }
+    
+    private boolean shouldStopBuilding(List<double[]> X, List<String> y, int depth) {
+        return X.isEmpty() || 
+               y.isEmpty() || 
+               depth >= maxDepth || 
+               y.size() < minSamplesSplit || 
+               isPure(y);
+    }
+    
+    private SplitInfo findBestSplit(List<double[]> X, List<String> y, int mFeatures) {
+        int nFeatures = X.get(0).length;
+        int[] candidateFeatures = getRandomFeatures(nFeatures, mFeatures);
+        
+        SplitInfo bestSplit = new SplitInfo();
+        
+        for (int featureIndex : candidateFeatures) {
+            // Get unique values for this feature
+            double[] values = X.stream()
+                              .mapToDouble(sample -> sample[featureIndex])
+                              .distinct()
+                              .sorted()
+                              .toArray();
+            
+            // Try potential thresholds
+            for (int i = 0; i < values.length - 1; i++) {
+                double threshold = (values[i] + values[i + 1]) / 2.0;
+                
+                SplitInfo currentSplit = evaluateSplit(X, y, featureIndex, threshold);
+                
+                if (currentSplit.isValid() && currentSplit.gini < bestSplit.gini) {
+                    bestSplit.update(currentSplit);
+                }
+            }
+        }
+        
+        return bestSplit;
+    }
+    
+    private SplitInfo evaluateSplit(List<double[]> X, List<String> y, 
+                                    int featureIndex, double threshold) {
+        SplitInfo split = new SplitInfo();
+        
+        // Partition data
+        for (int i = 0; i < X.size(); i++) {
+            if (X.get(i)[featureIndex] <= threshold) {
+                split.leftIndices.add(i);
+            } else {
+                split.rightIndices.add(i);
+            }
+        }
+        
+        // Check if split is valid
+        if (split.leftIndices.isEmpty() || split.rightIndices.isEmpty()) {
+            return split;
+        }
+        
+        // Calculate Gini impurity
+        List<String> leftY = split.leftIndices.stream()
+                            .map(y::get)
+                            .collect(Collectors.toList());
+        List<String> rightY = split.rightIndices.stream()
+                             .map(y::get)
+                             .collect(Collectors.toList());
+        
+        split.featureIndex = featureIndex;
+        split.threshold = threshold;
+        split.gini = calculateWeightedGini(leftY, rightY);
+        
+        return split;
+    }
+    
+    private class SplitInfo {
+        double gini = Double.MAX_VALUE;
+        int featureIndex = -1;
+        double threshold = 0;
+        List<Integer> leftIndices = new ArrayList<>();
+        List<Integer> rightIndices = new ArrayList<>();
+        
+        boolean isValid() {
+            return featureIndex >= 0 && !leftIndices.isEmpty() && !rightIndices.isEmpty();
+        }
+        
+        void update(SplitInfo other) {
+            this.gini = other.gini;
+            this.featureIndex = other.featureIndex;
+            this.threshold = other.threshold;
+            this.leftIndices = new ArrayList<>(other.leftIndices);
+            this.rightIndices = new ArrayList<>(other.rightIndices);
+        }
+    }
+
+    // ===========================================================
+    // HELPER METHODS
+    // ===========================================================
+    private boolean isPure(List<String> y) {
+        return y.stream()
+               .distinct()
+               .count() <= 1;
+    }
+    
+    private String getMajorityLabel(List<String> y) {
+        return y.stream()
+               .collect(Collectors.groupingBy(
+                   Function.identity(),
+                   Collectors.counting()
+               ))
+               .entrySet().stream()
+               .max(Map.Entry.comparingByValue())
+               .map(Map.Entry::getKey)
+               .orElse("Unknown");
+    }
+    
+    private double calculateGini(List<String> y) {
+        if (y.isEmpty()) return 0.0;
+        
+        Map<String, Long> counts = y.stream()
+            .collect(Collectors.groupingBy(
+                Function.identity(),
+                Collectors.counting()
+            ));
+        
+        double sum = counts.values().stream()
+            .mapToDouble(count -> Math.pow((double)count / y.size(), 2))
+            .sum();
+        
+        return 1.0 - sum;
+    }
+    
+    private double calculateWeightedGini(List<String> leftY, List<String> rightY) {
+        int total = leftY.size() + rightY.size();
+        if (total == 0) return 0.0;
+        
+        double leftGini = calculateGini(leftY);
+        double rightGini = calculateGini(rightY);
+        
+        return (leftY.size() * leftGini + rightY.size() * rightGini) / total;
+    }
+    
+    private int[] getRandomFeatures(int nTotalFeatures, int nSelectedFeatures) {
+        List<Integer> allFeatures = IntStream.range(0, nTotalFeatures)
+            .boxed()
+            .collect(Collectors.toList());
+        
+        Collections.shuffle(allFeatures, random);
+        
+        return allFeatures.stream()
+               .limit(nSelectedFeatures)
+               .mapToInt(Integer::intValue)
+               .toArray();
+    }
+
+    // ===========================================================
+    // EVALUATION METRICS
+    // ===========================================================
+    public double calculateAccuracy(List<String> yTrue, List<String> yPred) {
+        if (yTrue.size() != yPred.size() || yTrue.isEmpty()) {
             return 0.0;
-        int correct = 0;
-        for (int i = 0; i < Xtest.size(); i++) {
-            String pred = predict(Xtest.get(i));
-            if (pred != null && pred.equals(ytest.get(i))) {
-                correct++;
-            }
         }
-        return (double) correct / (double) Xtest.size();
+        
+        long correct = IntStream.range(0, yTrue.size())
+                      .filter(i -> yTrue.get(i).equals(yPred.get(i)))
+                      .count();
+        
+        return (double) correct / yTrue.size();
+    }
+    
+    public Map<String, Map<String, Double>> calculateClassificationReport(
+            List<String> yTrue, List<String> yPred, List<String> labels) {
+        
+        int[][] confusionMatrix = calculateConfusionMatrix(yTrue, yPred, labels);
+        Map<String, Map<String, Double>> report = new HashMap<>();
+        
+        double[] macroMetrics = {0.0, 0.0, 0.0};
+        
+        IntStream.range(0, labels.size()).forEach(i -> {
+            String label = labels.get(i);
+            
+            int TP = confusionMatrix[i][i];
+            
+            int FN = IntStream.range(0, labels.size())
+                             .filter(j -> j != i)
+                             .map(j -> confusionMatrix[i][j])
+                             .sum();
+            
+            int FP = IntStream.range(0, labels.size())
+                             .filter(j -> j != i)
+                             .map(j -> confusionMatrix[j][i])
+                             .sum();
+            
+            int support = Arrays.stream(confusionMatrix[i]).sum();
+            
+            double precision = (TP + FP == 0) ? 0.0 : (double) TP / (TP + FP);
+            double recall = (TP + FN == 0) ? 0.0 : (double) TP / (TP + FN);
+            double f1 = (precision + recall == 0) ? 0.0 : 
+                        2 * precision * recall / (precision + recall);
+            
+            Map<String, Double> metrics = new HashMap<>();
+            metrics.put("precision", precision);
+            metrics.put("recall", recall);
+            metrics.put("f1", f1);
+            metrics.put("support", (double) support);
+            
+            report.put(label, metrics);
+            
+            macroMetrics[0] += precision;
+            macroMetrics[1] += recall;
+            macroMetrics[2] += f1;
+        });
+        
+        // Calculate macro averages
+        int numClasses = labels.size();
+        Map<String, Double> macroAvg = new HashMap<>();
+        macroAvg.put("precision", macroMetrics[0] / numClasses);
+        macroAvg.put("recall", macroMetrics[1] / numClasses);
+        macroAvg.put("f1", macroMetrics[2] / numClasses);
+        macroAvg.put("support", (double) yTrue.size());
+        
+        report.put("macro_avg", macroAvg);
+        
+        return report;
+    }
+    
+    public int[][] calculateConfusionMatrix(List<String> yTrue, 
+                                            List<String> yPred, 
+                                            List<String> labels) {
+        int n = labels.size();
+        int[][] matrix = new int[n][n];
+        
+        Map<String, Integer> labelIndex = IntStream.range(0, n)
+            .boxed()
+            .collect(Collectors.toMap(
+                labels::get,
+                Function.identity()
+            ));
+        
+        IntStream.range(0, yTrue.size())
+            .forEach(i -> {
+                int actual = labelIndex.get(yTrue.get(i));
+                int predicted = labelIndex.get(yPred.get(i));
+                matrix[actual][predicted]++;
+            });
+        
+        return matrix;
     }
 
-    public static void runRandomForest(String trainCsvPath) {
+    // ===========================================================
+    // DATA LOADING METHODS
+    // ===========================================================
+    private static void loadData(String filePath, 
+                                 List<double[]> features, 
+                                 List<String> labels) throws IOException {
+        
+        if (!Files.exists(Paths.get(filePath))) {
+            throw new IOException("File does not exist: " + filePath);
+        }
+        
+        List<String> lines = Files.readAllLines(Paths.get(filePath));
+        if (lines.isEmpty()) {
+            throw new IOException("File is empty: " + filePath);
+        }
+        
+        // Skip header and process each line
+        lines.stream()
+            .skip(1)
+            .filter(line -> !line.trim().isEmpty())
+            .forEach(line -> {
+                String[] parts = line.split(",", -1);
+                
+                if (parts.length >= 3) {
+                    try {
+                        String label = parts[2].trim();
+                        
+                        double[] featureArray = new double[parts.length - 2];
+                        
+                        // First feature from column 1
+                        featureArray[0] = parseDoubleSafe(parts[1]);
+                        
+                        // Remaining features from columns 3 onward
+                        for (int j = 3; j < parts.length; j++) {
+                            featureArray[j - 2] = parseDoubleSafe(parts[j]);
+                        }
+                        
+                        labels.add(label);
+                        features.add(featureArray);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Skipping malformed line: " + line);
+                    }
+                }
+            });
+        
+        System.out.println("Loaded " + features.size() + " samples from: " + filePath);
+    }
+    
+    private static double parseDoubleSafe(String value) {
         try {
-            List<double[]> X = new ArrayList<>();
-            List<String> y = new ArrayList<>();
-            loadData(trainCsvPath, X, y);
+            return value == null || value.trim().isEmpty() ? 
+                   0.0 : Double.parseDouble(value.trim());
+        } catch (NumberFormatException e) {
+            return 0.0;
+        }
+    }
+    
+    private static List<String> getUniqueLabels(List<String> labels) {
+        return labels.stream()
+               .distinct()
+               .sorted()
+               .collect(Collectors.toList());
+    }
 
-            if (X.isEmpty()) {
-                System.out.println("No data loaded from " + trainCsvPath);
-                return;
-            }
-
-            int n = X.size();
-            List<String> classLabels = getUniqueLabels(y);
-
-            // Shuffle + chia 80/20 nội bộ
-            List<Integer> indices = new ArrayList<>();
-            for (int i = 0; i < n; i++)
-                indices.add(i);
-            Collections.shuffle(indices, new Random(42));
-
-            int splitIndex = (int) (0.8 * n);
+    // ===========================================================
+    // MAIN TRAIN-TEST PIPELINE (Java 8 compatible)
+    // ===========================================================
+    public static void runRandomForestTrainTest(String trainPath, String testPath) {
+        try {
+            System.out.println(repeatChar('=', 80));
+            System.out.println("RANDOM FOREST CLASSIFIER - TRAIN/TEST EVALUATION");
+            System.out.println(repeatChar('=', 80));
+            
+            // Load training data
+            System.out.println("\n[1] Loading training data...");
             List<double[]> X_train = new ArrayList<>();
             List<String> y_train = new ArrayList<>();
+            loadData(trainPath, X_train, y_train);
+            
+            // Load test data
+            System.out.println("[2] Loading test data...");
             List<double[]> X_test = new ArrayList<>();
             List<String> y_test = new ArrayList<>();
-
-            for (int i = 0; i < n; i++) {
-                int idx = indices.get(i);
-                if (i < splitIndex) {
-                    X_train.add(X.get(idx));
-                    y_train.add(y.get(idx));
-                } else {
-                    X_test.add(X.get(idx));
-                    y_test.add(y.get(idx));
-                }
+            loadData(testPath, X_test, y_test);
+            
+            if (X_train.isEmpty() || X_test.isEmpty()) {
+                System.err.println("Error: Empty dataset!");
+                return;
             }
-
-            int nFeatures = X_train.get(0).length;
+            
+            // Set hyperparameters
             int numTrees = 50;
             int maxDepth = 10;
-            int minSamplesSplit = 5;
-            int maxFeatures = (int) Math.sqrt(nFeatures);
-
-            RandomForestClassifier rf = new RandomForestClassifier(
-                    numTrees, maxDepth, minSamplesSplit, maxFeatures);
-
-            // Đo Training Time
-            long startTime = System.currentTimeMillis();
-            rf.fit(X_train, y_train);
-            long trainingTime = System.currentTimeMillis() - startTime;
-
-            // Đo Prediction Time
-            startTime = System.currentTimeMillis();
-            List<String> y_pred = new ArrayList<>();
-            for (double[] x : X_test) {
-                y_pred.add(rf.predict(x));
-            }
-            long predictionTime = System.currentTimeMillis() - startTime;
-
-            double acc = rf.accuracy(X_test, y_test);
-
-            // Tính toán Metrics
-            Map<String, Map<String, Double>> metrics = calculateMetrics(y_test, y_pred, classLabels);
-            Map<String, Double> cmData = metrics.get("Confusion Matrix");
-
-            System.out.println("===== RANDOM FOREST CLASSIFICATION =====");
-            System.out.println("Train csv path: " + trainCsvPath);
-            System.out.println("Total samples: " + n);
-            System.out.println("Train samples: " + X_train.size());
-            System.out.println("Test samples:  " + X_test.size());
-            System.out.println("Num trees:     " + numTrees);
-            System.out.println("Max depth:     " + maxDepth);
-            System.out.println("Max features:  " + maxFeatures);
-            System.out.println("Runtime (Training): " + trainingTime + " ms");
-            System.out.println("Runtime (Prediction): " + predictionTime + " ms");
-            System.out.println("Accuracy (Overall) = " + String.format("%.4f", acc));
-
-            System.out.println("\n========== CLASSIFICATION REPORT ==========");
-            System.out.printf("| %-8s | %-10s | %-7s | %-9s | %-7s |\n",
-                    "Class", "Precision", "Recall", "F1-Score", "Support");
-            System.out.println("|:--------:|:----------:|:-------:|:---------:|:-------:|");
-
-            for (String label : classLabels) {
-                Map<String, Double> m = metrics.get(label);
-                System.out.printf("| %-8s | %-10s | %-7s | %-9s | %-7s |\n",
-                        label,
-                        String.format("%.4f", m.get("Precision")),
-                        String.format("%.4f", m.get("Recall")),
-                        String.format("%.4f", m.get("F1-Score")),
-                        String.format("%.0f", m.get("Support")));
-            }
-
-            System.out.println("|------------------------------------------------------------|");
-            Map<String, Double> macro = metrics.get("Macro Avg");
-            System.out.printf("| %-8s | %-10s | %-7s | %-9s | %-7s |\n",
-                    "Macro Avg",
-                    String.format("%.4f", macro.get("Precision")),
-                    String.format("%.4f", macro.get("Recall")),
-                    String.format("%.4f", macro.get("F1-Score")),
-                    String.format("%.0f", macro.get("Support")));
-
-            System.out.println("\n========== CONFUSION MATRIX (Predicted vs Actual) ==========");
-            System.out.printf("| %-8s", "|");
-            for (String label : classLabels) {
-                System.out.printf(" %-8s |", label + " (P)");
-            }
-            System.out.println();
-
-            System.out.printf("|:--------:", "|");
-            for (int i = 0; i < classLabels.size(); i++) {
-                System.out.printf(":--------:|");
-            }
-            System.out.println();
-
-            for (String actualLabel : classLabels) {
-                System.out.printf("| %-8s |", actualLabel + " (A)");
-                for (String predictedLabel : classLabels) {
-                    String key = actualLabel + "->" + predictedLabel;
-                    System.out.printf(" %-8.0f |", cmData.getOrDefault(key, 0.0));
-                }
-                System.out.println();
-            }
-
-            System.out.println("===== END RANDOM FOREST =====");
-
-        } catch (IOException e) {
-            System.err.println("Error reading training data: " + e.getMessage());
+            int minSamplesSplit = 2;
+            int nFeatures = X_train.get(0).length;
+            int maxFeatures = Math.max(3, (int) Math.sqrt(nFeatures));
+            
+            System.out.println("\n[3] Hyperparameters:");
+            System.out.println("    - Number of trees:      " + numTrees);
+            System.out.println("    - Maximum depth:        " + maxDepth);
+            System.out.println("    - Min samples split:    " + minSamplesSplit);
+            System.out.println("    - Max features:         " + maxFeatures);
+            System.out.println("    - Total features:       " + nFeatures);
+            
+            // Train model
+            System.out.println("\n[4] Training Random Forest...");
+            long trainStart = System.currentTimeMillis();
+            
+            RandomForestClassifier model = new RandomForestClassifier(
+                numTrees, maxDepth, minSamplesSplit, maxFeatures);
+            model.fit(X_train, y_train);
+            
+            long trainEnd = System.currentTimeMillis();
+            long trainTime = trainEnd - trainStart;
+            System.out.println("    Training completed in " + trainTime + " ms");
+            
+            // Make predictions
+            System.out.println("\n[5] Making predictions...");
+            long predictStart = System.currentTimeMillis();
+            
+            List<String> y_pred = model.predict(X_test);
+            double accuracy = model.calculateAccuracy(y_test, y_pred);
+            
+            long predictEnd = System.currentTimeMillis();
+            long predictTime = predictEnd - predictStart;
+            System.out.println("    Prediction completed in " + predictTime + " ms");
+            
+            // Get unique labels
+            List<String> uniqueLabels = getUniqueLabels(y_train);
+            
+            // Calculate metrics
+            System.out.println("\n[6] Calculating metrics...");
+            Map<String, Map<String, Double>> report = 
+                model.calculateClassificationReport(y_test, y_pred, uniqueLabels);
+            
+            int[][] confusionMatrix = 
+                model.calculateConfusionMatrix(y_test, y_pred, uniqueLabels);
+            
+            // Print results
+            printResultsSummary(X_train, X_test, uniqueLabels, 
+                                trainTime, predictTime, accuracy);
+            
+            printClassificationReport(report, uniqueLabels);
+            
+            printConfusionMatrix(confusionMatrix, uniqueLabels);
+            
+            printSamplePredictions(y_test, y_pred);
+            
+            System.out.println("\n" + repeatChar('=', 80));
+            System.out.println("EVALUATION COMPLETE");
+            System.out.println(repeatChar('=', 80));
+            
+        } catch (Exception e) {
+            System.err.println("\nERROR: " + e.getMessage());
             e.printStackTrace();
         }
     }
-
-    private static void loadData(String path,
-            List<double[]> X,
-            List<String> y) throws IOException {
-
-        List<String> lines = Files.readAllLines(Paths.get(path));
-        if (lines.isEmpty())
-            return;
-
-        // Bỏ qua dòng headers
-        for (int i = 1; i < lines.size(); i++) {
-            String line = lines.get(i).trim();
-            if (line.isEmpty())
-                continue;
-
-            String[] parts = line.split(",", -1);
-            if (parts.length < 3)
-                continue;
-
-            // Lấy nhãn TRỰC TIẾP từ cột 2 (Life Ladder)
-            // Nhãn đã là "Low", "Medium", "High"
-            String label = parts[2].trim();
-            y.add(label);
-
-            double[] features = new double[parts.length - 2];
-            int idx = 0;
-
-            features[idx++] = Double.parseDouble(parts[1]);
-
-            for (int j = 3; j < parts.length; j++) {
-                if (parts[j].isEmpty()) {
-
-                    features[idx++] = 0.0;
-                } else {
-
-                    features[idx++] = Double.parseDouble(parts[j]);
-                }
-            }
-            X.add(features);
-        }
+    
+    private static void printResultsSummary(List<double[]> X_train, List<double[]> X_test,
+                                            List<String> labels, long trainTime, 
+                                            long predictTime, double accuracy) {
+        System.out.println("\n" + repeatChar('=', 80));
+        System.out.println("RESULTS SUMMARY");
+        System.out.println(repeatChar('=', 80));
+        
+        System.out.println("\nDATASET INFORMATION:");
+        System.out.printf("  Training samples:  %10d\n", X_train.size());
+        System.out.printf("  Test samples:      %10d\n", X_test.size());
+        System.out.printf("  Number of classes: %10d\n", labels.size());
+        
+        System.out.println("\nPERFORMANCE TIMING:");
+        System.out.printf("  Training time:     %10d ms\n", trainTime);
+        System.out.printf("  Prediction time:   %10d ms\n", predictTime);
+        System.out.printf("  Total time:        %10d ms\n", trainTime + predictTime);
+        
+        System.out.println("\nMODEL PERFORMANCE:");
+        System.out.printf("  Accuracy:          %10.4f (%.2f%%)\n", 
+                         accuracy, accuracy * 100);
+    }
+    
+    private static void printClassificationReport(Map<String, Map<String, Double>> report,
+                                                  List<String> labels) {
+        System.out.println("\n" + repeatChar('-', 80));
+        System.out.println("CLASSIFICATION REPORT");
+        System.out.println(repeatChar('-', 80));
+        
+        System.out.printf("\n%-15s %-12s %-12s %-12s %-12s\n", 
+            "Class", "Precision", "Recall", "F1-Score", "Support");
+        System.out.println(repeatChar('-', 75));
+        
+        labels.forEach(label -> {
+            Map<String, Double> metrics = report.get(label);
+            System.out.printf("%-15s %-12.4f %-12.4f %-12.4f %-12.0f\n",
+                label,
+                metrics.get("precision"),
+                metrics.get("recall"),
+                metrics.get("f1"),
+                metrics.get("support"));
+        });
+        
+        Map<String, Double> macroAvg = report.get("macro_avg");
+        System.out.println(repeatChar('-', 75));
+        System.out.printf("%-15s %-12.4f %-12.4f %-12.4f %-12.0f\n",
+            "Macro Avg",
+            macroAvg.get("precision"),
+            macroAvg.get("recall"),
+            macroAvg.get("f1"),
+            macroAvg.get("support"));
+    }
+    
+    private static void printConfusionMatrix(int[][] matrix, List<String> labels) {
+        System.out.println("\n" + repeatChar('-', 80));
+        System.out.println("CONFUSION MATRIX");
+        System.out.println(repeatChar('-', 80));
+        
+        System.out.printf("\n%-15s", "Actual \\ Predicted");
+        labels.forEach(label -> System.out.printf(" %-10s", label));
+        System.out.println();
+        
+        System.out.println(repeatChar('-', 15 + 11 * labels.size()));
+        
+        IntStream.range(0, labels.size())
+                .forEach(i -> {
+                    System.out.printf("%-15s", labels.get(i));
+                    IntStream.range(0, labels.size())
+                            .forEach(j -> System.out.printf(" %-10d", matrix[i][j]));
+                    System.out.println();
+                });
+    }
+    
+    private static void printSamplePredictions(List<String> yTrue, List<String> yPred) {
+        System.out.println("\n" + repeatChar('-', 80));
+        System.out.println(" PREDICTIONS (First 10 instances)");
+        System.out.println(repeatChar('-', 80));
+        
+        System.out.printf("\n%-8s %-15s %-15s %-10s\n", 
+            "Index", "Actual", "Predicted", "Result");
+        System.out.println(repeatChar('-', 50));
+        
+        int limit = Math.min(10, yTrue.size());
+        IntStream.range(0, limit)
+                .forEach(i -> {
+                    boolean correct = yTrue.get(i).equals(yPred.get(i));
+                    String result = correct ? " CORRECT" : " WRONG";
+                    System.out.printf("%-8d %-15s %-15s %-10s\n",
+                        i + 1, yTrue.get(i), yPred.get(i), result);
+                });
     }
 
-    private TreeNode buildTree(List<double[]> X, List<String> y,
-            int depth, int mFeatures) {
-        TreeNode node = new TreeNode();
-        String majority = majorityLabel(y);
-
-        // điều kiện dừng
-        if (depth >= maxDepth || X.size() < minSamplesSplit || isPure(y)) {
-            node.isLeaf = true;
-            node.label = majority;
-            return node;
-        }
-
-        int nFeatures = X.get(0).length;
-        int[] featureIndices = getRandomFeatureIndices(nFeatures, mFeatures);
-
-        double bestGini = Double.MAX_VALUE;
-        int bestFeature = -1;
-        double bestThreshold = Double.NaN;
-        List<double[]> bestLeftX = null;
-        List<String> bestLeftY = null;
-        List<double[]> bestRightX = null;
-        List<String> bestRightY = null;
-
-        // duyệt các feature được chọn
-        for (int fIndex : featureIndices) {
-            double[] values = new double[X.size()];
-            for (int i = 0; i < X.size(); i++) {
-                values[i] = X.get(i)[fIndex];
-            }
-            double[] sorted = values.clone();
-            Arrays.sort(sorted);
-
-            List<Double> thresholds = new ArrayList<>();
-            for (int i = 1; i < sorted.length; i++) {
-                if (sorted[i] != sorted[i - 1]) {
-                    thresholds.add((sorted[i] + sorted[i - 1]) / 2.0);
-                }
-            }
-            if (thresholds.isEmpty())
-                continue;
-
-            for (Double thrObj : thresholds) {
-                double thr = thrObj;
-                List<double[]> leftX = new ArrayList<>();
-                List<String> leftY = new ArrayList<>();
-                List<double[]> rightX = new ArrayList<>();
-                List<String> rightY = new ArrayList<>();
-
-                for (int i = 0; i < X.size(); i++) {
-                    if (X.get(i)[fIndex] <= thr) {
-                        leftX.add(X.get(i));
-                        leftY.add(y.get(i));
-                    } else {
-                        rightX.add(X.get(i));
-                        rightY.add(y.get(i));
-                    }
-                }
-                if (leftX.isEmpty() || rightX.isEmpty())
-                    continue;
-
-                double gini = giniImpurity(leftY, rightY);
-                if (gini < bestGini) {
-                    bestGini = gini;
-                    bestFeature = fIndex;
-                    bestThreshold = thr;
-                    bestLeftX = leftX;
-                    bestLeftY = leftY;
-                    bestRightX = rightX;
-                    bestRightY = rightY;
-                }
-            }
-        }
-
-        if (bestFeature == -1) {
-            node.isLeaf = true;
-            node.label = majority;
-            return node;
-        }
-
-        node.isLeaf = false;
-        node.featureIndex = bestFeature;
-        node.threshold = bestThreshold;
-        node.label = majority;
-        node.left = buildTree(bestLeftX, bestLeftY, depth + 1, mFeatures);
-        node.right = buildTree(bestRightX, bestRightY, depth + 1, mFeatures);
-        return node;
-    }
-
-    private String majorityLabel(List<String> y) {
-        Map<String, Integer> counts = new HashMap<>();
-        for (String label : y) {
-            counts.put(label, counts.getOrDefault(label, 0) + 1);
-        }
-        String bestLabel = null;
-        int bestCount = -1;
-        for (Map.Entry<String, Integer> e : counts.entrySet()) {
-            if (e.getValue() > bestCount) {
-                bestCount = e.getValue();
-                bestLabel = e.getKey();
-            }
-        }
-        return bestLabel;
-    }
-
-    private boolean isPure(List<String> y) {
-        if (y.isEmpty())
-            return true;
-        String first = y.get(0);
-        for (int i = 1; i < y.size(); i++) {
-            if (!first.equals(y.get(i)))
-                return false;
-        }
-        return true;
-    }
-
-    private int[] getRandomFeatureIndices(int nFeatures, int mFeatures) {
-        List<Integer> all = new ArrayList<>();
-        for (int i = 0; i < nFeatures; i++)
-            all.add(i);
-        Collections.shuffle(all, random);
-        mFeatures = Math.min(mFeatures, nFeatures);
-        int[] res = new int[mFeatures];
-        for (int i = 0; i < mFeatures; i++) {
-            res[i] = all.get(i);
-        }
-        return res;
-    }
-
-    private double giniImpurity(List<String> leftY, List<String> rightY) {
-        int total = leftY.size() + rightY.size();
-        double gLeft = giniOf(leftY);
-        double gRight = giniOf(rightY);
-        return (leftY.size() * gLeft + rightY.size() * gRight) / total;
-    }
-
-    private double giniOf(List<String> y) {
-        if (y.isEmpty())
-            return 0.0;
-        Map<String, Integer> counts = new HashMap<>();
-        for (String label : y) {
-            counts.put(label, counts.getOrDefault(label, 0) + 1);
-        }
-        double sum = 0.0;
-        for (int c : counts.values()) {
-            double p = (double) c / y.size();
-            sum += p * p;
-        }
-        return 1.0 - sum;
-    }
-
-    private String predictTree(TreeNode node, double[] x) {
-        if (node.isLeaf || node.left == null || node.right == null) {
-            return node.label;
-        }
-        if (x[node.featureIndex] <= node.threshold) {
-            return predictTree(node.left, x);
-        } else {
-            return predictTree(node.right, x);
-        }
-    }
-
-    private static Map<String, Map<String, Double>> calculateMetrics(
-            List<String> yActual, List<String> yPredicted, List<String> classLabels) {
-
-        int nClasses = classLabels.size();
-        // Confusion Matrix: [Actual Index][Predicted Index] = Count
-        int[][] cm = new int[nClasses][nClasses];
-
-        // Map nhãn String sang Index int (0, 1, 2, ...)
-        Map<String, Integer> labelToIndex = new HashMap<>();
-        for (int i = 0; i < nClasses; i++) {
-            labelToIndex.put(classLabels.get(i), i);
-        }
-
-        // 1. Confusion Matrix (CM)
-        for (int i = 0; i < yActual.size(); i++) {
-            String actual = yActual.get(i);
-            String predicted = yPredicted.get(i);
-
-            Integer actIndex = labelToIndex.get(actual);
-            Integer predIndex = labelToIndex.get(predicted);
-
-            if (actIndex != null && predIndex != null) {
-                cm[actIndex][predIndex]++;
-            }
-        }
-
-        Map<String, Map<String, Double>> metrics = new LinkedHashMap<>();
-
-        double totalF1 = 0;
-        double totalPrecision = 0;
-        double totalRecall = 0;
-        int totalSupport = yActual.size();
-
-        // 2. Tính Precision, Recall, F1
-        for (int i = 0; i < nClasses; i++) {
-            String label = classLabels.get(i);
-
-            // True Positives (TP) = cm[i][i]
-            int tp = cm[i][i];
-
-            // False Positives (FP) = Tổng cột i - TP
-            int fp = 0;
-            for (int k = 0; k < nClasses; k++) {
-                if (k != i)
-                    fp += cm[k][i];
-            }
-
-            // False Negatives (FN) = Tổng hàng i - TP
-            int fn = 0;
-            for (int k = 0; k < nClasses; k++) {
-                if (k != i)
-                    fn += cm[i][k];
-            }
-
-            // Support (Tổng số mẫu thực tế của lớp i)
-            int support = tp + fn;
-
-            double precision = (tp + fp) == 0 ? 0.0 : (double) tp / (tp + fp);
-            double recall = (tp + fn) == 0 ? 0.0 : (double) tp / (tp + fn);
-            double f1Score = (precision + recall) == 0 ? 0.0 : 2 * precision * recall / (precision + recall);
-
-            Map<String, Double> classMetrics = new HashMap<>();
-            classMetrics.put("Precision", precision);
-            classMetrics.put("Recall", recall);
-            classMetrics.put("F1-Score", f1Score);
-            classMetrics.put("Support", (double) support);
-            metrics.put(label, classMetrics);
-
-            totalF1 += f1Score;
-            totalPrecision += precision;
-            totalRecall += recall;
-        }
-
-        // 3. Tính Macro Average (Trung bình cộng)
-        Map<String, Double> macroMetrics = new HashMap<>();
-        macroMetrics.put("Precision", totalPrecision / nClasses);
-        macroMetrics.put("Recall", totalRecall / nClasses);
-        macroMetrics.put("F1-Score", totalF1 / nClasses);
-        macroMetrics.put("Support", (double) totalSupport);
-        metrics.put("Macro Avg", macroMetrics);
-
-        // 4. Lưu Confusion Matrix dưới dạng một Map riêng biệt
-        Map<String, Double> cmData = new HashMap<>();
-        for (int i = 0; i < nClasses; i++) {
-            for (int j = 0; j < nClasses; j++) {
-                cmData.put(classLabels.get(i) + "->" + classLabels.get(j), (double) cm[i][j]);
-            }
-        }
-        metrics.put("Confusion Matrix", cmData);
-
-        return metrics;
-    }
-
-    /**
-     * Trả về danh sách các nhãn duy nhất từ dữ liệu.
-     */
-    private static List<String> getUniqueLabels(List<String> y) {
-        Set<String> unique = new HashSet<>(y);
-        List<String> sortedLabels = new ArrayList<>(unique);
-        Collections.sort(sortedLabels); // Sắp xếp theo thứ tự để đảm bảo CM ổn định (Low, Medium, High)
-        return sortedLabels;
-    }
 }
