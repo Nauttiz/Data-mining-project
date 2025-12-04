@@ -8,9 +8,9 @@ public class RandomForestClassifier {
 
     private static class TreeNode {
         boolean isLeaf;
-        String label; 
-        int featureIndex; 
-        double threshold; 
+        String label;
+        int featureIndex;
+        double threshold;
         TreeNode left;
         TreeNode right;
     }
@@ -93,12 +93,10 @@ public class RandomForestClassifier {
         return (double) correct / (double) Xtest.size();
     }
 
-
     public static void runRandomForest(String trainCsvPath) {
         try {
             List<double[]> X = new ArrayList<>();
             List<String> y = new ArrayList<>();
-
             loadData(trainCsvPath, X, y);
 
             if (X.isEmpty()) {
@@ -107,6 +105,7 @@ public class RandomForestClassifier {
             }
 
             int n = X.size();
+            List<String> classLabels = getUniqueLabels(y);
 
             // Shuffle + chia 80/20 nội bộ
             List<Integer> indices = new ArrayList<>();
@@ -115,7 +114,6 @@ public class RandomForestClassifier {
             Collections.shuffle(indices, new Random(42));
 
             int splitIndex = (int) (0.8 * n);
-
             List<double[]> X_train = new ArrayList<>();
             List<String> y_train = new ArrayList<>();
             List<double[]> X_test = new ArrayList<>();
@@ -132,35 +130,92 @@ public class RandomForestClassifier {
                 }
             }
 
+            int nFeatures = X_train.get(0).length;
             int numTrees = 50;
             int maxDepth = 10;
             int minSamplesSplit = 5;
-            int maxFeatures = (int) Math.sqrt(X_train.get(0).length);
+            int maxFeatures = (int) Math.sqrt(nFeatures);
 
             RandomForestClassifier rf = new RandomForestClassifier(
                     numTrees, maxDepth, minSamplesSplit, maxFeatures);
 
+            // Đo Training Time
+            long startTime = System.currentTimeMillis();
             rf.fit(X_train, y_train);
+            long trainingTime = System.currentTimeMillis() - startTime;
+
+            // Đo Prediction Time
+            startTime = System.currentTimeMillis();
+            List<String> y_pred = new ArrayList<>();
+            for (double[] x : X_test) {
+                y_pred.add(rf.predict(x));
+            }
+            long predictionTime = System.currentTimeMillis() - startTime;
+
             double acc = rf.accuracy(X_test, y_test);
+
+            // Tính toán Metrics
+            Map<String, Map<String, Double>> metrics = calculateMetrics(y_test, y_pred, classLabels);
+            Map<String, Double> cmData = metrics.get("Confusion Matrix");
 
             System.out.println("===== RANDOM FOREST CLASSIFICATION =====");
             System.out.println("Train csv path: " + trainCsvPath);
             System.out.println("Total samples: " + n);
             System.out.println("Train samples: " + X_train.size());
-            System.out.println("Test samples:  " + X_test.size());
-            System.out.println("Num trees:     " + numTrees);
-            System.out.println("Max depth:     " + maxDepth);
-            System.out.println("Max features:  " + maxFeatures);
-            System.out.println("Accuracy (20% hold-out) = " +
-                    String.format("%.4f", acc));
+            System.out.println("Test samples:  " + X_test.size());
+            System.out.println("Num trees:     " + numTrees);
+            System.out.println("Max depth:     " + maxDepth);
+            System.out.println("Max features:  " + maxFeatures);
+            System.out.println("Runtime (Training): " + trainingTime + " ms");
+            System.out.println("Runtime (Prediction): " + predictionTime + " ms");
+            System.out.println("Accuracy (Overall) = " + String.format("%.4f", acc));
 
-            System.out.println("Some predictions (predicted / actual):");
-            int show = Math.min(10, X_test.size());
-            for (int i = 0; i < show; i++) {
-                String pred = rf.predict(X_test.get(i));
-                String actual = y_test.get(i);
-                System.out.println((i + 1) + ". " + pred + " / " + actual);
+            System.out.println("\n========== CLASSIFICATION REPORT ==========");
+            System.out.printf("| %-8s | %-10s | %-7s | %-9s | %-7s |\n",
+                    "Class", "Precision", "Recall", "F1-Score", "Support");
+            System.out.println("|:--------:|:----------:|:-------:|:---------:|:-------:|");
+
+            for (String label : classLabels) {
+                Map<String, Double> m = metrics.get(label);
+                System.out.printf("| %-8s | %-10s | %-7s | %-9s | %-7s |\n",
+                        label,
+                        String.format("%.4f", m.get("Precision")),
+                        String.format("%.4f", m.get("Recall")),
+                        String.format("%.4f", m.get("F1-Score")),
+                        String.format("%.0f", m.get("Support")));
             }
+
+            System.out.println("|------------------------------------------------------------|");
+            Map<String, Double> macro = metrics.get("Macro Avg");
+            System.out.printf("| %-8s | %-10s | %-7s | %-9s | %-7s |\n",
+                    "Macro Avg",
+                    String.format("%.4f", macro.get("Precision")),
+                    String.format("%.4f", macro.get("Recall")),
+                    String.format("%.4f", macro.get("F1-Score")),
+                    String.format("%.0f", macro.get("Support")));
+
+            System.out.println("\n========== CONFUSION MATRIX (Predicted vs Actual) ==========");
+            System.out.printf("| %-8s", "|");
+            for (String label : classLabels) {
+                System.out.printf(" %-8s |", label + " (P)");
+            }
+            System.out.println();
+
+            System.out.printf("|:--------:", "|");
+            for (int i = 0; i < classLabels.size(); i++) {
+                System.out.printf(":--------:|");
+            }
+            System.out.println();
+
+            for (String actualLabel : classLabels) {
+                System.out.printf("| %-8s |", actualLabel + " (A)");
+                for (String predictedLabel : classLabels) {
+                    String key = actualLabel + "->" + predictedLabel;
+                    System.out.printf(" %-8.0f |", cmData.getOrDefault(key, 0.0));
+                }
+                System.out.println();
+            }
+
             System.out.println("===== END RANDOM FOREST =====");
 
         } catch (IOException e) {
@@ -188,32 +243,27 @@ public class RandomForestClassifier {
                 continue;
 
             // Lấy nhãn TRỰC TIẾP từ cột 2 (Life Ladder)
-            // Nhãn đã là "Low", "Medium", "High" 
+            // Nhãn đã là "Low", "Medium", "High"
             String label = parts[2].trim();
             y.add(label);
 
-            // features: bỏ cột 0 (Country name) VÀ cột 2 (Life Ladder - vì đã là nhãn)
-            // Tổng số cột: 11 (0-10). Feature sẽ là 9 cột (1 + 3-10)
             double[] features = new double[parts.length - 2];
             int idx = 0;
 
-            // 1. Cột 1: year
             features[idx++] = Double.parseDouble(parts[1]);
 
-            // 2. Các cột còn lại (từ cột 3 trở đi)
             for (int j = 3; j < parts.length; j++) {
                 if (parts[j].isEmpty()) {
-                    // Nếu là Missing value (lẽ ra đã được impute)
+
                     features[idx++] = 0.0;
                 } else {
-                    // Cột 3-10 là các thuộc tính đã được chuẩn hóa (dạng số)
+
                     features[idx++] = Double.parseDouble(parts[j]);
                 }
             }
             X.add(features);
         }
     }
-
 
     private TreeNode buildTree(List<double[]> X, List<String> y,
             int depth, int mFeatures) {
@@ -374,5 +424,108 @@ public class RandomForestClassifier {
         } else {
             return predictTree(node.right, x);
         }
+    }
+
+    private static Map<String, Map<String, Double>> calculateMetrics(
+            List<String> yActual, List<String> yPredicted, List<String> classLabels) {
+
+        int nClasses = classLabels.size();
+        // Confusion Matrix: [Actual Index][Predicted Index] = Count
+        int[][] cm = new int[nClasses][nClasses];
+
+        // Map nhãn String sang Index int (0, 1, 2, ...)
+        Map<String, Integer> labelToIndex = new HashMap<>();
+        for (int i = 0; i < nClasses; i++) {
+            labelToIndex.put(classLabels.get(i), i);
+        }
+
+        // 1. Confusion Matrix (CM)
+        for (int i = 0; i < yActual.size(); i++) {
+            String actual = yActual.get(i);
+            String predicted = yPredicted.get(i);
+
+            Integer actIndex = labelToIndex.get(actual);
+            Integer predIndex = labelToIndex.get(predicted);
+
+            if (actIndex != null && predIndex != null) {
+                cm[actIndex][predIndex]++;
+            }
+        }
+
+        Map<String, Map<String, Double>> metrics = new LinkedHashMap<>();
+
+        double totalF1 = 0;
+        double totalPrecision = 0;
+        double totalRecall = 0;
+        int totalSupport = yActual.size();
+
+        // 2. Tính Precision, Recall, F1
+        for (int i = 0; i < nClasses; i++) {
+            String label = classLabels.get(i);
+
+            // True Positives (TP) = cm[i][i]
+            int tp = cm[i][i];
+
+            // False Positives (FP) = Tổng cột i - TP
+            int fp = 0;
+            for (int k = 0; k < nClasses; k++) {
+                if (k != i)
+                    fp += cm[k][i];
+            }
+
+            // False Negatives (FN) = Tổng hàng i - TP
+            int fn = 0;
+            for (int k = 0; k < nClasses; k++) {
+                if (k != i)
+                    fn += cm[i][k];
+            }
+
+            // Support (Tổng số mẫu thực tế của lớp i)
+            int support = tp + fn;
+
+            double precision = (tp + fp) == 0 ? 0.0 : (double) tp / (tp + fp);
+            double recall = (tp + fn) == 0 ? 0.0 : (double) tp / (tp + fn);
+            double f1Score = (precision + recall) == 0 ? 0.0 : 2 * precision * recall / (precision + recall);
+
+            Map<String, Double> classMetrics = new HashMap<>();
+            classMetrics.put("Precision", precision);
+            classMetrics.put("Recall", recall);
+            classMetrics.put("F1-Score", f1Score);
+            classMetrics.put("Support", (double) support);
+            metrics.put(label, classMetrics);
+
+            totalF1 += f1Score;
+            totalPrecision += precision;
+            totalRecall += recall;
+        }
+
+        // 3. Tính Macro Average (Trung bình cộng)
+        Map<String, Double> macroMetrics = new HashMap<>();
+        macroMetrics.put("Precision", totalPrecision / nClasses);
+        macroMetrics.put("Recall", totalRecall / nClasses);
+        macroMetrics.put("F1-Score", totalF1 / nClasses);
+        macroMetrics.put("Support", (double) totalSupport);
+        metrics.put("Macro Avg", macroMetrics);
+
+        // 4. Lưu Confusion Matrix dưới dạng một Map riêng biệt
+        Map<String, Double> cmData = new HashMap<>();
+        for (int i = 0; i < nClasses; i++) {
+            for (int j = 0; j < nClasses; j++) {
+                cmData.put(classLabels.get(i) + "->" + classLabels.get(j), (double) cm[i][j]);
+            }
+        }
+        metrics.put("Confusion Matrix", cmData);
+
+        return metrics;
+    }
+
+    /**
+     * Trả về danh sách các nhãn duy nhất từ dữ liệu.
+     */
+    private static List<String> getUniqueLabels(List<String> y) {
+        Set<String> unique = new HashSet<>(y);
+        List<String> sortedLabels = new ArrayList<>(unique);
+        Collections.sort(sortedLabels); // Sắp xếp theo thứ tự để đảm bảo CM ổn định (Low, Medium, High)
+        return sortedLabels;
     }
 }
