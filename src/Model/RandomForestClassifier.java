@@ -3,32 +3,11 @@ package Model;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
-
 import java.util.function.*;
 import java.util.stream.*;
 
 public class RandomForestClassifier {
 
-    // ===========================================================
-    // HELPER METHODS FOR STRING REPETITION (Java 8 compatible)
-    // ===========================================================
-    private static String repeatChar(char ch, int count) {
-        char[] chars = new char[count];
-        Arrays.fill(chars, ch);
-        return new String(chars);
-    }
-    
-    private static String repeatString(String str, int count) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < count; i++) {
-            sb.append(str);
-        }
-        return sb.toString();
-    }
-
-    // ===========================================================
-    // TREE NODE CLASS
-    // ===========================================================
     private static class TreeNode {
         boolean isLeaf;
         String label;
@@ -38,9 +17,6 @@ public class RandomForestClassifier {
         TreeNode right;
     }
 
-    // ===========================================================
-    // FIELDS
-    // ===========================================================
     private final List<TreeNode> trees;
     private final int numTrees;
     private final int maxDepth;
@@ -48,9 +24,6 @@ public class RandomForestClassifier {
     private final int maxFeatures;
     private final Random random;
 
-    // ===========================================================
-    // CONSTRUCTOR
-    // ===========================================================
     public RandomForestClassifier(int numTrees, int maxDepth,
                                   int minSamplesSplit, int maxFeatures) {
         this.numTrees = numTrees;
@@ -61,9 +34,6 @@ public class RandomForestClassifier {
         this.random = new Random(42);
     }
 
-    // ===========================================================
-    // TRAINING METHODS
-    // ===========================================================
     public void fit(List<double[]> X, List<String> y) {
         validateInput(X, y);
         trees.clear();
@@ -72,10 +42,10 @@ public class RandomForestClassifier {
         int nFeatures = X.get(0).length;
         int mFeatures = calculateFeaturesPerTree(nFeatures);
         
-        System.out.println("Training Random Forest with " + numTrees + " trees...");
+        System.out.println("Training " + numTrees + " trees...");
         
         for (int t = 0; t < numTrees; t++) {
-            // Bootstrap sampling with replacement
+            // Bootstrap sampling
             List<double[]> sampleX = new ArrayList<>();
             List<String> sampleY = new ArrayList<>();
             
@@ -87,18 +57,11 @@ public class RandomForestClassifier {
             
             TreeNode root = buildTree(sampleX, sampleY, 0, mFeatures);
             trees.add(root);
-            
-            // Progress tracking
-            if ((t + 1) % 10 == 0 || t == numTrees - 1) {
-                System.out.println("  Trained " + (t + 1) + "/" + numTrees + " trees");
-            }
         }
+        System.out.println("Training completed");
     }
     
     private void validateInput(List<double[]> X, List<String> y) {
-        Objects.requireNonNull(X, "Feature matrix cannot be null");
-        Objects.requireNonNull(y, "Labels cannot be null");
-        
         if (X.isEmpty() || X.size() != y.size()) {
             throw new IllegalArgumentException("Invalid input data dimensions");
         }
@@ -110,15 +73,11 @@ public class RandomForestClassifier {
                (int) Math.sqrt(nFeatures);
     }
 
-    // ===========================================================
-    // PREDICTION METHODS
-    // ===========================================================
     public String predict(double[] x) {
         if (trees.isEmpty()) {
             throw new IllegalStateException("Model has not been trained");
         }
         
-        // Collect votes from all trees
         Map<String, Long> votes = trees.stream()
             .map(tree -> predictTree(tree, x))
             .collect(Collectors.groupingBy(
@@ -126,7 +85,6 @@ public class RandomForestClassifier {
                 Collectors.counting()
             ));
         
-        // Return label with most votes
         return votes.entrySet().stream()
             .max(Map.Entry.comparingByValue())
             .map(Map.Entry::getKey)
@@ -146,14 +104,11 @@ public class RandomForestClassifier {
         return node.label;
     }
 
-    // ===========================================================
-    // TREE BUILDING METHODS
-    // ===========================================================
     private TreeNode buildTree(List<double[]> X, List<String> y, int depth, int mFeatures) {
         TreeNode node = new TreeNode();
         
         // Check stopping conditions
-        if (shouldStopBuilding(X, y, depth)) {
+        if (X.isEmpty() || depth >= maxDepth || y.size() < minSamplesSplit || isPure(y)) {
             node.isLeaf = true;
             node.label = getMajorityLabel(y);
             return node;
@@ -195,14 +150,6 @@ public class RandomForestClassifier {
         return node;
     }
     
-    private boolean shouldStopBuilding(List<double[]> X, List<String> y, int depth) {
-        return X.isEmpty() || 
-               y.isEmpty() || 
-               depth >= maxDepth || 
-               y.size() < minSamplesSplit || 
-               isPure(y);
-    }
-    
     private SplitInfo findBestSplit(List<double[]> X, List<String> y, int mFeatures) {
         int nFeatures = X.get(0).length;
         int[] candidateFeatures = getRandomFeatures(nFeatures, mFeatures);
@@ -210,14 +157,12 @@ public class RandomForestClassifier {
         SplitInfo bestSplit = new SplitInfo();
         
         for (int featureIndex : candidateFeatures) {
-            // Get unique values for this feature
             double[] values = X.stream()
                               .mapToDouble(sample -> sample[featureIndex])
                               .distinct()
                               .sorted()
                               .toArray();
             
-            // Try potential thresholds
             for (int i = 0; i < values.length - 1; i++) {
                 double threshold = (values[i] + values[i + 1]) / 2.0;
                 
@@ -236,7 +181,6 @@ public class RandomForestClassifier {
                                     int featureIndex, double threshold) {
         SplitInfo split = new SplitInfo();
         
-        // Partition data
         for (int i = 0; i < X.size(); i++) {
             if (X.get(i)[featureIndex] <= threshold) {
                 split.leftIndices.add(i);
@@ -245,12 +189,10 @@ public class RandomForestClassifier {
             }
         }
         
-        // Check if split is valid
         if (split.leftIndices.isEmpty() || split.rightIndices.isEmpty()) {
             return split;
         }
         
-        // Calculate Gini impurity
         List<String> leftY = split.leftIndices.stream()
                             .map(y::get)
                             .collect(Collectors.toList());
@@ -285,13 +227,8 @@ public class RandomForestClassifier {
         }
     }
 
-    // ===========================================================
-    // HELPER METHODS
-    // ===========================================================
     private boolean isPure(List<String> y) {
-        return y.stream()
-               .distinct()
-               .count() <= 1;
+        return y.stream().distinct().count() <= 1;
     }
     
     private String getMajorityLabel(List<String> y) {
@@ -345,9 +282,6 @@ public class RandomForestClassifier {
                .toArray();
     }
 
-    // ===========================================================
-    // EVALUATION METRICS
-    // ===========================================================
     public double calculateAccuracy(List<String> yTrue, List<String> yPred) {
         if (yTrue.size() != yPred.size() || yTrue.isEmpty()) {
             return 0.0;
@@ -361,29 +295,49 @@ public class RandomForestClassifier {
     }
     
     public Map<String, Map<String, Double>> calculateClassificationReport(
-            List<String> yTrue, List<String> yPred, List<String> labels) {
+            List<String> yTrue, List<String> yPred) {
         
-        int[][] confusionMatrix = calculateConfusionMatrix(yTrue, yPred, labels);
+        List<String> labels = yTrue.stream()
+                               .distinct()
+                               .sorted()
+                               .collect(Collectors.toList());
+        
+        Map<String, Integer> labelIndex = IntStream.range(0, labels.size())
+            .boxed()
+            .collect(Collectors.toMap(
+                labels::get,
+                Function.identity()
+            ));
+        
+        int n = labels.size();
+        int[][] confusionMatrix = new int[n][n];
+        
+        IntStream.range(0, yTrue.size())
+            .forEach(i -> {
+                int actual = labelIndex.get(yTrue.get(i));
+                int predicted = labelIndex.get(yPred.get(i));
+                confusionMatrix[actual][predicted]++;
+            });
+        
         Map<String, Map<String, Double>> report = new HashMap<>();
-        
         double[] macroMetrics = {0.0, 0.0, 0.0};
         
-        IntStream.range(0, labels.size()).forEach(i -> {
+        for (int i = 0; i < labels.size(); i++) {
             String label = labels.get(i);
             
             int TP = confusionMatrix[i][i];
             
-            int FN = IntStream.range(0, labels.size())
-                             .filter(j -> j != i)
-                             .map(j -> confusionMatrix[i][j])
-                             .sum();
+            int FN = 0;
+            int FP = 0;
+            int support = 0;
             
-            int FP = IntStream.range(0, labels.size())
-                             .filter(j -> j != i)
-                             .map(j -> confusionMatrix[j][i])
-                             .sum();
-            
-            int support = Arrays.stream(confusionMatrix[i]).sum();
+            for (int j = 0; j < labels.size(); j++) {
+                support += confusionMatrix[i][j];
+                if (j != i) {
+                    FN += confusionMatrix[i][j];
+                    FP += confusionMatrix[j][i];
+                }
+            }
             
             double precision = (TP + FP == 0) ? 0.0 : (double) TP / (TP + FP);
             double recall = (TP + FN == 0) ? 0.0 : (double) TP / (TP + FN);
@@ -401,9 +355,9 @@ public class RandomForestClassifier {
             macroMetrics[0] += precision;
             macroMetrics[1] += recall;
             macroMetrics[2] += f1;
-        });
+        }
         
-        // Calculate macro averages
+        // Macro averages
         int numClasses = labels.size();
         Map<String, Double> macroAvg = new HashMap<>();
         macroAvg.put("precision", macroMetrics[0] / numClasses);
@@ -415,47 +369,13 @@ public class RandomForestClassifier {
         
         return report;
     }
-    
-    public int[][] calculateConfusionMatrix(List<String> yTrue, 
-                                            List<String> yPred, 
-                                            List<String> labels) {
-        int n = labels.size();
-        int[][] matrix = new int[n][n];
-        
-        Map<String, Integer> labelIndex = IntStream.range(0, n)
-            .boxed()
-            .collect(Collectors.toMap(
-                labels::get,
-                Function.identity()
-            ));
-        
-        IntStream.range(0, yTrue.size())
-            .forEach(i -> {
-                int actual = labelIndex.get(yTrue.get(i));
-                int predicted = labelIndex.get(yPred.get(i));
-                matrix[actual][predicted]++;
-            });
-        
-        return matrix;
-    }
 
-    // ===========================================================
-    // DATA LOADING METHODS
-    // ===========================================================
     private static void loadData(String filePath, 
                                  List<double[]> features, 
                                  List<String> labels) throws IOException {
         
-        if (!Files.exists(Paths.get(filePath))) {
-            throw new IOException("File does not exist: " + filePath);
-        }
-        
         List<String> lines = Files.readAllLines(Paths.get(filePath));
-        if (lines.isEmpty()) {
-            throw new IOException("File is empty: " + filePath);
-        }
         
-        // Skip header and process each line
         lines.stream()
             .skip(1)
             .filter(line -> !line.trim().isEmpty())
@@ -465,26 +385,21 @@ public class RandomForestClassifier {
                 if (parts.length >= 3) {
                     try {
                         String label = parts[2].trim();
-                        
                         double[] featureArray = new double[parts.length - 2];
                         
-                        // First feature from column 1
                         featureArray[0] = parseDoubleSafe(parts[1]);
                         
-                        // Remaining features from columns 3 onward
                         for (int j = 3; j < parts.length; j++) {
                             featureArray[j - 2] = parseDoubleSafe(parts[j]);
                         }
                         
                         labels.add(label);
                         features.add(featureArray);
-                    } catch (NumberFormatException e) {
-                        System.err.println("Skipping malformed line: " + line);
+                    } catch (Exception e) {
+                        // Skip malformed lines
                     }
                 }
             });
-        
-        System.out.println("Loaded " + features.size() + " samples from: " + filePath);
     }
     
     private static double parseDoubleSafe(String value) {
@@ -495,31 +410,16 @@ public class RandomForestClassifier {
             return 0.0;
         }
     }
-    
-    private static List<String> getUniqueLabels(List<String> labels) {
-        return labels.stream()
-               .distinct()
-               .sorted()
-               .collect(Collectors.toList());
-    }
 
-    // ===========================================================
-    // MAIN TRAIN-TEST PIPELINE (Java 8 compatible)
-    // ===========================================================
     public static void runRandomForestTrainTest(String trainPath, String testPath) {
         try {
-            System.out.println(repeatChar('=', 80));
-            System.out.println("RANDOM FOREST CLASSIFIER - TRAIN/TEST EVALUATION");
-            System.out.println(repeatChar('=', 80));
+            System.out.println("=== Random Forest Classifier ===");
             
-            // Load training data
-            System.out.println("\n[1] Loading training data...");
+            // Load data
             List<double[]> X_train = new ArrayList<>();
             List<String> y_train = new ArrayList<>();
             loadData(trainPath, X_train, y_train);
             
-            // Load test data
-            System.out.println("[2] Loading test data...");
             List<double[]> X_test = new ArrayList<>();
             List<String> y_test = new ArrayList<>();
             loadData(testPath, X_test, y_test);
@@ -529,163 +429,67 @@ public class RandomForestClassifier {
                 return;
             }
             
-            // Set hyperparameters
+            // Hyperparameters
             int numTrees = 50;
             int maxDepth = 10;
             int minSamplesSplit = 2;
             int nFeatures = X_train.get(0).length;
             int maxFeatures = Math.max(3, (int) Math.sqrt(nFeatures));
             
-            System.out.println("\n[3] Hyperparameters:");
-            System.out.println("    - Number of trees:      " + numTrees);
-            System.out.println("    - Maximum depth:        " + maxDepth);
-            System.out.println("    - Min samples split:    " + minSamplesSplit);
-            System.out.println("    - Max features:         " + maxFeatures);
-            System.out.println("    - Total features:       " + nFeatures);
+            System.out.println("\nHyperparameters:");
+            System.out.println("  Trees: " + numTrees + ", Max Depth: " + maxDepth);
+            System.out.println("  Min Samples Split: " + minSamplesSplit);
+            System.out.println("  Features per tree: " + maxFeatures);
             
             // Train model
-            System.out.println("\n[4] Training Random Forest...");
-            long trainStart = System.currentTimeMillis();
+            long startTime = System.currentTimeMillis();
             
             RandomForestClassifier model = new RandomForestClassifier(
                 numTrees, maxDepth, minSamplesSplit, maxFeatures);
             model.fit(X_train, y_train);
             
-            long trainEnd = System.currentTimeMillis();
-            long trainTime = trainEnd - trainStart;
-            System.out.println("    Training completed in " + trainTime + " ms");
-            
-            // Make predictions
-            System.out.println("\n[5] Making predictions...");
-            long predictStart = System.currentTimeMillis();
-            
+            // Predictions
             List<String> y_pred = model.predict(X_test);
             double accuracy = model.calculateAccuracy(y_test, y_pred);
             
-            long predictEnd = System.currentTimeMillis();
-            long predictTime = predictEnd - predictStart;
-            System.out.println("    Prediction completed in " + predictTime + " ms");
+            long endTime = System.currentTimeMillis();
             
-            // Get unique labels
-            List<String> uniqueLabels = getUniqueLabels(y_train);
+            // Results
+            System.out.println("\nResults:");
+            System.out.println("  Training time: " + (endTime - startTime) + " ms");
+            System.out.println("  Accuracy: " + String.format("%.2f%%", accuracy * 100));
             
-            // Calculate metrics
-            System.out.println("\n[6] Calculating metrics...");
-            Map<String, Map<String, Double>> report = 
-                model.calculateClassificationReport(y_test, y_pred, uniqueLabels);
+            // Classification report
+            Map<String, Map<String, Double>> report = model.calculateClassificationReport(y_test, y_pred);
             
-            int[][] confusionMatrix = 
-                model.calculateConfusionMatrix(y_test, y_pred, uniqueLabels);
+            System.out.println("\nClassification Report:");
+            System.out.println("Class       Precision   Recall      F1-Score    Support");
+            System.out.println("--------------------------------------------------------");
             
-            // Print results
-            printResultsSummary(X_train, X_test, uniqueLabels, 
-                                trainTime, predictTime, accuracy);
+            for (String label : report.keySet()) {
+                if (!label.equals("macro_avg")) {
+                    Map<String, Double> metrics = report.get(label);
+                    System.out.printf("%-10s  %-10.4f  %-10.4f  %-10.4f  %-10.0f%n",
+                        label,
+                        metrics.get("precision"),
+                        metrics.get("recall"),
+                        metrics.get("f1"),
+                        metrics.get("support"));
+                }
+            }
             
-            printClassificationReport(report, uniqueLabels);
-            
-            printConfusionMatrix(confusionMatrix, uniqueLabels);
-            
-            printSamplePredictions(y_test, y_pred);
-            
-            System.out.println("\n" + repeatChar('=', 80));
-            System.out.println("EVALUATION COMPLETE");
-            System.out.println(repeatChar('=', 80));
-            
+            // Macro average
+            Map<String, Double> macroAvg = report.get("macro_avg");
+            System.out.println("--------------------------------------------------------");
+            System.out.printf("%-10s  %-10.4f  %-10.4f  %-10.4f  %-10.0f%n",
+                "Macro Avg",
+                macroAvg.get("precision"),
+                macroAvg.get("recall"),
+                macroAvg.get("f1"),
+                macroAvg.get("support"));
+                
         } catch (Exception e) {
-            System.err.println("\nERROR: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("Error: " + e.getMessage());
         }
     }
-    
-    private static void printResultsSummary(List<double[]> X_train, List<double[]> X_test,
-                                            List<String> labels, long trainTime, 
-                                            long predictTime, double accuracy) {
-        System.out.println("\n" + repeatChar('=', 80));
-        System.out.println("RESULTS SUMMARY");
-        System.out.println(repeatChar('=', 80));
-        
-        System.out.println("\nDATASET INFORMATION:");
-        System.out.printf("  Training samples:  %10d\n", X_train.size());
-        System.out.printf("  Test samples:      %10d\n", X_test.size());
-        System.out.printf("  Number of classes: %10d\n", labels.size());
-        
-        System.out.println("\nPERFORMANCE TIMING:");
-        System.out.printf("  Training time:     %10d ms\n", trainTime);
-        System.out.printf("  Prediction time:   %10d ms\n", predictTime);
-        System.out.printf("  Total time:        %10d ms\n", trainTime + predictTime);
-        
-        System.out.println("\nMODEL PERFORMANCE:");
-        System.out.printf("  Accuracy:          %10.4f (%.2f%%)\n", 
-                         accuracy, accuracy * 100);
-    }
-    
-    private static void printClassificationReport(Map<String, Map<String, Double>> report,
-                                                  List<String> labels) {
-        System.out.println("\n" + repeatChar('-', 80));
-        System.out.println("CLASSIFICATION REPORT");
-        System.out.println(repeatChar('-', 80));
-        
-        System.out.printf("\n%-15s %-12s %-12s %-12s %-12s\n", 
-            "Class", "Precision", "Recall", "F1-Score", "Support");
-        System.out.println(repeatChar('-', 75));
-        
-        labels.forEach(label -> {
-            Map<String, Double> metrics = report.get(label);
-            System.out.printf("%-15s %-12.4f %-12.4f %-12.4f %-12.0f\n",
-                label,
-                metrics.get("precision"),
-                metrics.get("recall"),
-                metrics.get("f1"),
-                metrics.get("support"));
-        });
-        
-        Map<String, Double> macroAvg = report.get("macro_avg");
-        System.out.println(repeatChar('-', 75));
-        System.out.printf("%-15s %-12.4f %-12.4f %-12.4f %-12.0f\n",
-            "Macro Avg",
-            macroAvg.get("precision"),
-            macroAvg.get("recall"),
-            macroAvg.get("f1"),
-            macroAvg.get("support"));
-    }
-    
-    private static void printConfusionMatrix(int[][] matrix, List<String> labels) {
-        System.out.println("\n" + repeatChar('-', 80));
-        System.out.println("CONFUSION MATRIX");
-        System.out.println(repeatChar('-', 80));
-        
-        System.out.printf("\n%-15s", "Actual \\ Predicted");
-        labels.forEach(label -> System.out.printf(" %-10s", label));
-        System.out.println();
-        
-        System.out.println(repeatChar('-', 15 + 11 * labels.size()));
-        
-        IntStream.range(0, labels.size())
-                .forEach(i -> {
-                    System.out.printf("%-15s", labels.get(i));
-                    IntStream.range(0, labels.size())
-                            .forEach(j -> System.out.printf(" %-10d", matrix[i][j]));
-                    System.out.println();
-                });
-    }
-    
-    private static void printSamplePredictions(List<String> yTrue, List<String> yPred) {
-        System.out.println("\n" + repeatChar('-', 80));
-        System.out.println(" PREDICTIONS (First 10 instances)");
-        System.out.println(repeatChar('-', 80));
-        
-        System.out.printf("\n%-8s %-15s %-15s %-10s\n", 
-            "Index", "Actual", "Predicted", "Result");
-        System.out.println(repeatChar('-', 50));
-        
-        int limit = Math.min(10, yTrue.size());
-        IntStream.range(0, limit)
-                .forEach(i -> {
-                    boolean correct = yTrue.get(i).equals(yPred.get(i));
-                    String result = correct ? " CORRECT" : " WRONG";
-                    System.out.printf("%-8d %-15s %-15s %-10s\n",
-                        i + 1, yTrue.get(i), yPred.get(i), result);
-                });
-    }
-
 }

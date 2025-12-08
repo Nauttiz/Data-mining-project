@@ -297,7 +297,7 @@ public class DataCleaner {
         }
         
         bw.close();
-        System.out.println("Cleaned data saved to: " + outputPath);
+        // System.out.println("Cleaned data saved to: " + outputPath);
     }
     
     public List<String[]> getData() {

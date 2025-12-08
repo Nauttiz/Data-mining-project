@@ -49,6 +49,5 @@ public class SplitData {
         System.out.println("Total rows: " + dataLines.size());
         System.out.println("Train rows: " + (trainData.size() - 1));
         System.out.println("Test rows: " + (testData.size() - 1));
-        System.out.println("Saved to: " + trainOutputPath + " and " + testOutputPath);
     }
 }
