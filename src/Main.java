@@ -1,6 +1,7 @@
 import preprocessing.DataCleaner;
 import preprocessing.DataAnalyzer;
 import Model.RandomForestClassifier;
+import evaluation.Eval10Fold;
 import Model.PCA_RandomForest;
 
 import utils.SplitData;
@@ -61,6 +62,9 @@ public class Main {
             RandomForestClassifier.runRandomForestTrainTest(trainPath, testPath);
 
             PCA_RandomForest.runPCAPipeline(trainPath, testPath, 5);
+
+            System.out.println(">>> CALLING EVAL10FOLD");
+            Eval10Fold.runEvaluation(outputPath);
 
         } catch (Exception e) {
             System.err.println("Error during data processing: " + e.getMessage());
